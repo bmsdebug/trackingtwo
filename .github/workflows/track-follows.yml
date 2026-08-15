@@ -1,0 +1,66 @@
+name: Track new follows
+
+on:
+  schedule:
+    # 14:00 UTC daily. GitHub's scheduler is best-effort and often runs a few
+    # minutes late; pick an off-peak minute to reduce the delay.
+    - cron: "7 14 * * *"
+  workflow_dispatch:
+    inputs:
+      full_resync:
+        description: "Crawl the entire following list (slower, costs more)"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Report to the log without filing an issue or writing state"
+        type: boolean
+        default: false
+
+# Never let two runs race on the state file.
+concurrency:
+  group: track-follows
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check for new follows
+        env:
+          TWITTERAPI_IO_KEY: ${{ secrets.TWITTERAPI_IO_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_USERNAME: ${{ vars.TARGET_USERNAME || 'eladgil' }}
+          FULL_RESYNC: ${{ inputs.full_resync }}
+        run: |
+          python track.py ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Commit state
+        if: ${{ !inputs.dry_run }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          if git diff --cached --quiet; then
+            echo "No state change."
+            exit 0
+          fi
+          git commit -m "state: follows checked $(date -u +%Y-%m-%dT%H:%MZ)"
+          for delay in 2 4 8 16 0; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && \
+              git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            [ "$delay" -eq 0 ] && break
+            echo "push failed, retrying in ${delay}s"
+            sleep "$delay"
+          done
+          echo "::error::could not push state after retries"
+          exit 1
