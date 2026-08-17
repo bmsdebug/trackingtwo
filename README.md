@@ -83,6 +83,15 @@ python track.py --full         # re-crawl everything; also prunes unfollows
 the issue body instead of filing it. All three are also available as checkboxes on
 the *Run workflow* button.
 
+```bash
+python3 test_track.py    # 25 checks against a mock API, no key or network needed
+```
+
+The mock mirrors the live response shape (`followings`, `followers_count`,
+`screen_name`), and the suite covers the cases that are easy to get wrong:
+seeding, the unfollow slide-up false positive, a 200+ follow burst, `--full`
+pruning, re-follow after a prune, and `--dry-run` leaving state untouched.
+
 ## Troubleshooting
 
 **Run fails in ~1 second with `TWITTERAPI_IO_KEY is not set`.** The secret isn't

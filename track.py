@@ -163,7 +163,10 @@ def normalize(u):
         "name": pick("name") or "",
         "bio": (pick("description", "bio") or "").strip(),
         "followers": pick("followers", "followers_count") or 0,
-        "verified": bool(pick("isBlueVerified", "isVerified", "verified") or False),
+        # This endpoint returns only the deprecated `verified` flag, which is
+        # false for almost every account -- it is not the blue check. Recorded
+        # for completeness; deliberately not rendered as a badge.
+        "verified_legacy": bool(pick("verified", "isVerified") or False),
         "account_created": pick("createdAt", "created_at") or "",
         "url": f"https://x.com/{handle}" if handle else None,
     }
@@ -261,8 +264,7 @@ def build_issue(target, new_users):
         handle = u["username"] or u["id"]
         followers = u["followers"]
         followers = f"{followers:,}" if isinstance(followers, int) else followers
-        badge = " ☑️" if u["verified"] else ""
-        lines.append(f"### [@{handle}]({u['url']}){badge}")
+        lines.append(f"### [@{handle}]({u['url']})")
         if u["name"]:
             lines.append(f"**{md_escape(u['name'], 80)}** · {followers} followers")
         else:
