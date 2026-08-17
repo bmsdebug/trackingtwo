@@ -2,8 +2,8 @@ name: Track new follows
 
 on:
   schedule:
-    # 14:00 UTC daily. GitHub's scheduler is best-effort and often runs a few
-    # minutes late; pick an off-peak minute to reduce the delay.
+    # 14:00 UTC daily. GitHub's scheduler is best-effort -- observed runs land
+    # ~20 min late, which is normal and harmless for a daily check.
     - cron: "7 14 * * *"
   workflow_dispatch:
     inputs:
@@ -13,6 +13,10 @@ on:
         default: false
       dry_run:
         description: "Report to the log without filing an issue or writing state"
+        type: boolean
+        default: false
+      probe:
+        description: "Fetch one page and dump the raw API shape, then stop"
         type: boolean
         default: false
 
@@ -29,11 +33,37 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      # Without this, a missing secret shows up as a generic red X and a
+      # one-line error buried in the log. Fail loudly in the run summary
+      # instead, and name the mistakes that actually cause it.
+      - name: Verify API key is configured
+        env:
+          TWITTERAPI_IO_KEY: ${{ secrets.TWITTERAPI_IO_KEY }}
+        run: |
+          if [ -n "$TWITTERAPI_IO_KEY" ]; then
+            echo "TWITTERAPI_IO_KEY present (${#TWITTERAPI_IO_KEY} chars)."
+            exit 0
+          fi
+          {
+            echo "## :key: \`TWITTERAPI_IO_KEY\` is not set"
+            echo
+            echo "The workflow cannot call the API without it. Add it here:"
+            echo "**Settings -> Secrets and variables -> Actions -> New repository secret**"
+            echo
+            echo "If you believe you already added it, check these -- each one"
+            echo "produces exactly this empty-value symptom:"
+            echo "- Saved under the **Variables** tab instead of **Secrets** (separate tabs, same page)"
+            echo "- Saved as an **Environment** secret rather than a **Repository** secret"
+            echo "- Name mismatch: it must be exactly \`TWITTERAPI_IO_KEY\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Missing secret::TWITTERAPI_IO_KEY is not set - see the run summary"
+          exit 1
 
       - name: Check for new follows
         env:
@@ -41,11 +71,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET_USERNAME: ${{ vars.TARGET_USERNAME || 'eladgil' }}
           FULL_RESYNC: ${{ inputs.full_resync }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          PROBE: ${{ inputs.probe }}
         run: |
-          python track.py ${{ inputs.dry_run && '--dry-run' || '' }}
+          args=""
+          if [ "$DRY_RUN" = "true" ]; then args="$args --dry-run"; fi
+          if [ "$PROBE" = "true" ]; then args="$args --probe"; fi
+          python track.py $args
 
       - name: Commit state
-        if: ${{ !inputs.dry_run }}
+        if: ${{ inputs.dry_run != true && inputs.probe != true }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

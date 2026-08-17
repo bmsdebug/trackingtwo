@@ -38,7 +38,8 @@ against the previous page means slide-ups are recognised and stay quiet.
    account needed, pay-as-you-go with no subscription. Add a couple of dollars;
    at this usage it will last years.
 2. **Add it as a repo secret:** Settings → Secrets and variables → Actions → New
-   repository secret, named `TWITTERAPI_IO_KEY`.
+   repository secret, named exactly `TWITTERAPI_IO_KEY`. It must be a **repository
+   secret**, not a variable and not an environment secret — see Troubleshooting.
 3. **Merge this to your default branch.** GitHub only runs `schedule:` workflows
    from the default branch — on a side branch the cron will never fire.
 4. **Run it once manually:** Actions → *Track new follows* → Run workflow. This
@@ -73,12 +74,31 @@ fetch, so a bug or an upstream change can't quietly run up a bill.
 
 ```bash
 export TWITTERAPI_IO_KEY=...
+python track.py --probe        # 1 call: dump the raw API shape and stop
 python track.py --dry-run      # print what would be filed, touch nothing
 python track.py --full         # re-crawl everything; also prunes unfollows
 ```
 
 `--dry-run` needs no GitHub credentials. Without `GITHUB_TOKEN` the script prints
-the issue body instead of filing it.
+the issue body instead of filing it. All three are also available as checkboxes on
+the *Run workflow* button.
+
+## Troubleshooting
+
+**Run fails in ~1 second with `TWITTERAPI_IO_KEY is not set`.** The secret isn't
+reaching the job. The workflow now says this in the run summary rather than burying
+it. Each of these looks identical from the job's side — an empty value:
+
+- Saved under the **Variables** tab instead of **Secrets** (same page, adjacent tabs)
+- Saved as an **Environment** secret instead of a **Repository** secret
+- Name isn't exactly `TWITTERAPI_IO_KEY`
+
+**Run fails with `could not find a list of users in the response`.** The API's field
+names changed. The error prints the top-level keys and a truncated response body;
+`--probe` shows the full shape. Add the new field name to the tuple in `fetch_page`.
+
+**Scheduled run lands ~20 minutes late.** Normal — GitHub's cron is best-effort and
+deprioritised under load. Irrelevant for a daily check.
 
 ## Notes
 

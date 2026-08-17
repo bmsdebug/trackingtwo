@@ -106,7 +106,10 @@ def fetch_page(api_key, username, user_id, cursor):
             users = val
             break
     if users is None:
-        raise RuntimeError(f"could not find a user list in response: {list(data)}")
+        raise RuntimeError(
+            "could not find a list of users in the response. Top-level keys: "
+            f"{list(data)}. Raw response (truncated): {json.dumps(data)[:600]}"
+        )
 
     cursor = data.get("next_cursor") or data.get("nextCursor") or ""
     has_next = data.get("has_next_page")
@@ -114,6 +117,32 @@ def fetch_page(api_key, username, user_id, cursor):
         has_next = bool(cursor) and len(users) >= PAGE_SIZE
 
     return [normalize(u) for u in users], cursor, bool(has_next)
+
+
+def probe(api_key, username, user_id):
+    """Dump the raw shape of one page, to confirm the field names we rely on."""
+    params = {"cursor": "", **({"userId": user_id} if user_id else {"userName": username})}
+    url = f"{API_BASE}{FOLLOWINGS_PATH}?{urllib.parse.urlencode(params)}"
+    data = http_json(url, {"X-API-Key": api_key, "Accept": "application/json"})
+
+    log(f"top-level keys: {list(data)}")
+    log(f"status={data.get('status')!r} msg={data.get('msg')!r}")
+    for key in ("followings", "following", "users", "data"):
+        if isinstance(data.get(key), list):
+            entries = data[key]
+            log(f"user list found under {key!r}: {len(entries)} entries")
+            if entries:
+                log(f"first entry fields: {sorted(entries[0])}")
+                log("normalized to:\n" + json.dumps(normalize(entries[0]), indent=2))
+            break
+    else:
+        log("NO user list found under any expected key. Raw response:")
+        log(json.dumps(data, indent=2)[:2000])
+        sys.exit("probe failed: response shape is not what track.py expects")
+
+    cursor = data.get("next_cursor") or data.get("nextCursor") or ""
+    log(f"has_next_page={data.get('has_next_page')} next_cursor={'set' if cursor else 'empty'}")
+    log("\nProbe OK — the parser matches the live response.")
 
 
 def normalize(u):
@@ -286,11 +315,20 @@ def main():
         help="crawl the entire following list instead of just the newest pages",
     )
     ap.add_argument("--dry-run", action="store_true", help="don't file an issue or write state")
+    ap.add_argument(
+        "--probe",
+        action="store_true",
+        help="fetch one page, report the raw API shape, and exit (1 API call)",
+    )
     args = ap.parse_args()
 
     api_key = os.environ.get("TWITTERAPI_IO_KEY")
     if not api_key:
         sys.exit("TWITTERAPI_IO_KEY is not set. Get a key at https://twitterapi.io")
+
+    if args.probe:
+        probe(api_key, args.target, args.target_id)
+        return
 
     state_path, log_path = Path(args.state), Path(args.log)
     state = load_state(state_path)
