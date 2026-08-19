@@ -46,9 +46,9 @@ against the previous page means slide-ups are recognised and stay quiet.
    seeds the baseline (takes a minute or two, one API call per 200 accounts).
 
 That's it — from then on it runs itself at 14:07 UTC daily and opens an issue when
-there's something to report. GitHub emails you on new issues in your own repo by
-default; check your [notification settings](https://github.com/settings/notifications)
-if you don't get them.
+there's something to report. Each issue assigns and ccs you so it actually reaches
+your inbox; owning the repo is *not* by itself enough to be notified about a
+bot-authored issue (see Troubleshooting).
 
 ### Tracking someone else instead
 
