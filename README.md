@@ -102,6 +102,15 @@ it. Each of these looks identical from the job's side — an empty value:
 - Saved as an **Environment** secret instead of a **Repository** secret
 - Name isn't exactly `TWITTERAPI_IO_KEY`
 
+**An issue was filed but no email arrived.** The issue is authored by
+`github-actions[bot]`, i.e. someone else's activity. GitHub's default
+"Participating and @mentions" subscription sends nothing for that unless you are
+mentioned or assigned, so reports can pile up unread. Filed issues now assign and
+cc the repo owner (override with a `NOTIFY_USER` repo variable), which counts as
+participating. If you still hear nothing, check that email is enabled under
+[notification settings](https://github.com/settings/notifications) -- or set the
+repo's Watch to **All Activity** as a belt-and-braces.
+
 **Run fails with `could not find a list of users in the response`.** The API's field
 names changed. The error prints the top-level keys and a truncated response body;
 `--probe` shows the full shape. Add the new field name to the tuple in `fetch_page`.
