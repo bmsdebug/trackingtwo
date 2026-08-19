@@ -287,6 +287,17 @@ def create_issue(title, body):
         log(f"\n=== {title} ===\n{body}\n")
         return None
 
+    # An issue opened by github-actions[bot] is somebody else's activity. Under
+    # the default "Participating and @mentions" subscription that produces no
+    # notification at all, which is why the first detection went unseen. Being
+    # assigned or @mentioned both count as participating, so do both rather
+    # than depending on the reader's watch settings.
+    notify = os.environ.get("NOTIFY_USER") or repo.split("/")[0]
+    payload = {"title": title, "body": body}
+    if notify:
+        payload["body"] = f"{body}\n\ncc @{notify}"
+        payload["assignees"] = [notify]
+
     data = http_json(
         f"https://api.github.com/repos/{repo}/issues",
         {
@@ -296,7 +307,7 @@ def create_issue(title, body):
             "User-Agent": "follow-tracker",
         },
         method="POST",
-        payload={"title": title, "body": body},
+        payload=payload,
     )
     return data.get("html_url")
 
