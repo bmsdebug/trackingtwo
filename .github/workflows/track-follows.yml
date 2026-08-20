@@ -22,6 +22,14 @@ on:
         description: "Fetch one page and dump the raw API shape, then stop"
         type: boolean
         default: false
+      check_source:
+        description: "One-off lookup: does this handle... (leave blank to skip)"
+        type: string
+        default: ""
+      check_target:
+        description: "...follow this handle?"
+        type: string
+        default: ""
 
 # Never let two runs race on the state file.
 concurrency:
@@ -76,14 +84,22 @@ jobs:
           FULL_RESYNC: ${{ inputs.full_resync }}
           DRY_RUN: ${{ inputs.dry_run }}
           PROBE: ${{ inputs.probe }}
+          CHECK_SOURCE: ${{ inputs.check_source }}
+          CHECK_TARGET: ${{ inputs.check_target }}
         run: |
+          # Handles come from workflow input, so pass them as argv rather than
+          # interpolating them into the command string.
+          if [ -n "$CHECK_SOURCE" ] && [ -n "$CHECK_TARGET" ]; then
+            python track.py --check "$CHECK_SOURCE" "$CHECK_TARGET"
+            exit 0
+          fi
           args=""
           if [ "$DRY_RUN" = "true" ]; then args="$args --dry-run"; fi
           if [ "$PROBE" = "true" ]; then args="$args --probe"; fi
           python track.py $args
 
       - name: Commit state
-        if: ${{ inputs.dry_run != true && inputs.probe != true }}
+        if: ${{ inputs.dry_run != true && inputs.probe != true && inputs.check_source == '' }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

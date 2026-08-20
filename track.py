@@ -152,6 +152,41 @@ def probe(api_key, username, user_id):
     log("\nProbe OK — the parser matches the live response.")
 
 
+def check_follows(api_key, source, target, max_pages=50):
+    """Answer 'does @source follow @target?' by scanning source's followings.
+
+    Walks pages newest-first and stops at the first match, so a recent follow
+    costs one call. A negative answer costs a full crawl -- that is inherent:
+    proving absence means looking everywhere.
+    """
+    src = source.lstrip("@")
+    want = target.lstrip("@").lower()
+    cursor, scanned = "", 0
+
+    for page in range(1, max_pages + 1):
+        users, cursor, has_next = fetch_page(api_key, src, None, cursor)
+        if not users:
+            break
+        for i, u in enumerate(users, 1):
+            if (u["username"] or "").lower() == want:
+                log(f"\nYES — @{src} follows @{u['username']}.")
+                log(f"Position {scanned + i} in the following list (newest first), "
+                    f"so it is follow #{scanned + i} counting back from most recent.")
+                log(json.dumps(u, indent=2))
+                return True
+        scanned += len(users)
+        log(f"  page {page}: {scanned} accounts scanned, no match yet")
+        if not has_next or not cursor:
+            break
+    else:
+        log(f"! stopped at the {max_pages}-page cap — answer is inconclusive")
+        return None
+
+    log(f"\nNO — @{want} is not in @{src}'s following list ({scanned} accounts, "
+        f"complete list scanned).")
+    return False
+
+
 def normalize(u):
     """Flatten one user object down to the fields we care about."""
 
@@ -336,6 +371,12 @@ def main():
     )
     ap.add_argument("--dry-run", action="store_true", help="don't file an issue or write state")
     ap.add_argument(
+        "--check",
+        nargs=2,
+        metavar=("SOURCE", "TARGET"),
+        help="answer whether SOURCE follows TARGET, then exit",
+    )
+    ap.add_argument(
         "--probe",
         action="store_true",
         help="fetch one page, report the raw API shape, and exit (1 API call)",
@@ -345,6 +386,10 @@ def main():
     api_key = os.environ.get("TWITTERAPI_IO_KEY")
     if not api_key:
         sys.exit("TWITTERAPI_IO_KEY is not set. Get a key at https://twitterapi.io")
+
+    if args.check:
+        check_follows(api_key, args.check[0], args.check[1])
+        return
 
     if args.probe:
         probe(api_key, args.target, args.target_id)
