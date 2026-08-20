@@ -80,7 +80,7 @@ jobs:
         env:
           TWITTERAPI_IO_KEY: ${{ secrets.TWITTERAPI_IO_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_USERNAME: ${{ vars.TARGET_USERNAME || 'eladgil' }}
+          TARGETS: ${{ vars.TARGETS || 'eladgil,GuptaRK22' }}
           FULL_RESYNC: ${{ inputs.full_resync }}
           DRY_RUN: ${{ inputs.dry_run }}
           PROBE: ${{ inputs.probe }}

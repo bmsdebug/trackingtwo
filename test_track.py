@@ -10,6 +10,8 @@ import json, sys, tempfile, io
 from pathlib import Path
 from contextlib import redirect_stdout
 
+import os
+os.environ["API_MIN_INTERVAL"] = "0"   # no throttle against a mock
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import track
 
@@ -53,7 +55,8 @@ def run(following_ids, statedir, argv, env=None):
     os.environ.pop("GITHUB_REPOSITORY", None)
     for k, v in (env or {}).items():
         os.environ[k] = v
-    sys.argv = ["track.py", "--state", f"{statedir}/following.json",
+    sys.argv = ["track.py", "--targets", "eladgil",
+                "--state", f"{statedir}/following.json",
                 "--log", f"{statedir}/new_follows.jsonl"] + argv
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -146,6 +149,29 @@ check("issue: title", title.startswith("@eladgil followed 1 new account —"), t
 check("issue: link", "[@someone](https://x.com/someone)" in body)
 check("issue: follower count formatted", "12,345 followers" in body)
 check("issue: bio flattened and pipe-escaped", "> builder of things second line" in body)
+
+# ---- 10. per-target paths are derived and isolated -----------------------
+import argparse as _ap
+_a = _ap.Namespace(state=None, log=None, state_dir="state")
+sp, lp = track.target_paths("eladgil", _a)
+sp2, _ = track.target_paths("GuptaRK22", _a)
+check("paths: derived per target", str(sp) == "state/eladgil/following.json", str(sp))
+check("paths: log alongside state", str(lp) == "state/eladgil/new_follows.jsonl", str(lp))
+check("paths: targets do not collide", sp != sp2)
+_b = _ap.Namespace(state="x/s.json", log="x/l.jsonl", state_dir="state")
+check("paths: explicit override wins", str(track.target_paths("eladgil", _b)[0]) == "x/s.json")
+
+# ---- 11. legacy single-file state is adopted, not re-seeded ---------------
+import tempfile as _tf
+legacy_dir = _tf.mkdtemp()
+Path(f"{legacy_dir}/following.json").write_text(json.dumps(
+    {"target": "eladgil", "seeded_at": "2026-08-17T07:11:11+00:00",
+     "last_checked": "x", "ids": ["1", "2", "3"]}))
+adopted = track.load_state_migrating("eladgil", Path(f"{legacy_dir}/eladgil/following.json"), legacy_dir)
+check("migration: legacy baseline adopted", set(adopted["ids"]) == {"1", "2", "3"},
+      f"got {adopted}")
+other = track.load_state_migrating("GuptaRK22", Path(f"{legacy_dir}/GuptaRK22/following.json"), legacy_dir)
+check("migration: other target not given elad's ids", not other.get("ids"), f"got {other}")
 
 print("\n=== SAMPLE ISSUE ===")
 print(title)

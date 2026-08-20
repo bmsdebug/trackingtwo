@@ -37,6 +37,19 @@ PAGE_SIZE = 200  # fixed by the endpoint
 MAX_PAGES_INCREMENTAL = int(os.environ.get("MAX_PAGES_INCREMENTAL", "5"))
 MAX_PAGES_FULL = int(os.environ.get("MAX_PAGES_FULL", "250"))
 
+# twitterapi.io's free tier allows one request every 5 seconds and answers 429
+# otherwise. Retries absorbed that, but pacing the calls avoids the churn --
+# and with more than one target there are more back-to-back calls to pace.
+_last_api_call = [0.0]
+
+
+def _throttle():
+    interval = float(os.environ.get("API_MIN_INTERVAL", "5.2"))
+    wait = interval - (time.monotonic() - _last_api_call[0])
+    if wait > 0:
+        time.sleep(wait)
+    _last_api_call[0] = time.monotonic()
+
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -92,6 +105,7 @@ def fetch_page(api_key, username, user_id, cursor):
         params["userName"] = username
 
     url = f"{API_BASE}{FOLLOWINGS_PATH}?{urllib.parse.urlencode(params)}"
+    _throttle()
     data = http_json(url, {"X-API-Key": api_key, "Accept": "application/json"})
 
     status = str(data.get("status", "")).lower()
@@ -357,12 +371,110 @@ def create_issue(title, body):
 # --------------------------------------------------------------------------
 
 
+def target_paths(target, args):
+    """Where this target's state lives. Explicit --state/--log win (tests)."""
+    if args.state and args.log:
+        return Path(args.state), Path(args.log)
+    d = Path(args.state_dir) / target
+    return d / "following.json", d / "new_follows.jsonl"
+
+
+def load_state_migrating(target, state_path, state_dir):
+    """Load state, falling back to the pre-multi-target single-file layout.
+
+    Without this a layout change would look like a fresh target and silently
+    re-seed, losing the baseline and every follow made in the gap.
+    """
+    if state_path.exists():
+        return load_state(state_path)
+    legacy = Path(state_dir) / "following.json"
+    if legacy.exists():
+        try:
+            data = json.loads(legacy.read_text())
+        except (OSError, json.JSONDecodeError):
+            return load_state(state_path)
+        if data.get("target") == target:
+            log(f"  adopting legacy baseline from {legacy}")
+            return data
+    return load_state(state_path)
+
+
+def process_target(api_key, target, args):
+    """Run one target end to end. Returns True if anything was reported."""
+    state_path, log_path = target_paths(target, args)
+    # Only consult the legacy layout when paths were derived. With an explicit
+    # --state the caller means that file and nothing else.
+    state = (load_state(state_path) if args.state
+             else load_state_migrating(target, state_path, args.state_dir))
+    known = set(state.get("ids") or [])
+    seeding = not state.get("seeded_at") or not known
+    full = args.full or seeding
+
+    log(f"\n=== @{target} ===")
+    log(f"baseline: {len(known)} accounts · "
+        f"mode: {'full crawl' if full else 'incremental (newest pages only)'}")
+
+    new_users, seen_ids, exhausted = crawl(api_key, target, None, known, full)
+
+    if seeding:
+        # First run establishes the baseline. Reporting ~1,800 "new" follows on
+        # day one would be noise, so we stay quiet.
+        state.update(target=target, seeded_at=now_iso(),
+                     last_checked=now_iso(), ids=sorted(seen_ids))
+        if not args.dry_run:
+            save_state(state_path, state)
+        log(f"Seeded baseline with {len(seen_ids)} accounts. No issue filed.")
+        log("Future runs will report only follows added after this point.")
+        return False
+
+    if full and exhausted:
+        # A complete crawl is authoritative: drop unfollowed accounts so a
+        # re-follow later still registers as new.
+        combined = seen_ids
+        dropped = len(known - seen_ids)
+        if dropped:
+            log(f"  {dropped} account(s) no longer followed — pruned from baseline")
+    else:
+        combined = known | seen_ids
+
+    state.update(target=target, last_checked=now_iso(), ids=sorted(combined))
+
+    if not new_users:
+        log("No new follows.")
+        if not args.dry_run:
+            save_state(state_path, state)
+        return False
+
+    log(f"{len(new_users)} new follow(s):")
+    for u in new_users:
+        log(f"  @{u['username']} — {u['name']}")
+
+    stamp = now_iso()
+    entries = [dict(u, detected_at=stamp, target=target) for u in new_users]
+    title, body = build_issue(target, new_users)
+
+    if args.dry_run:
+        log(f"\n(dry run)\n\n=== {title} ===\n{body}")
+        return True
+
+    url = create_issue(title, body)
+    if url:
+        log(f"Filed {url}")
+    append_log(log_path, entries)
+    save_state(state_path, state)
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--target", default=os.environ.get("TARGET_USERNAME", "eladgil"))
-    ap.add_argument("--target-id", default=os.environ.get("TARGET_USER_ID") or None)
-    ap.add_argument("--state", default=os.environ.get("STATE_PATH", "state/following.json"))
-    ap.add_argument("--log", default=os.environ.get("LOG_PATH", "state/new_follows.jsonl"))
+    ap.add_argument(
+        "--targets",
+        default=os.environ.get("TARGETS") or os.environ.get("TARGET_USERNAME", "eladgil"),
+        help="comma-separated handles to track",
+    )
+    ap.add_argument("--state-dir", default=os.environ.get("STATE_DIR", "state"))
+    ap.add_argument("--state", default=os.environ.get("STATE_PATH") or None)
+    ap.add_argument("--log", default=os.environ.get("LOG_PATH") or None)
     ap.add_argument(
         "--full",
         action="store_true",
@@ -387,82 +499,35 @@ def main():
     if not api_key:
         sys.exit("TWITTERAPI_IO_KEY is not set. Get a key at https://twitterapi.io")
 
+    targets = [t.strip().lstrip("@") for t in args.targets.split(",") if t.strip()]
+    if not targets:
+        sys.exit("no targets configured — set TARGETS to a comma-separated list")
+
     if args.check:
         check_follows(api_key, args.check[0], args.check[1])
         return
 
     if args.probe:
-        probe(api_key, args.target, args.target_id)
+        probe(api_key, targets[0], None)
         return
 
-    state_path, log_path = Path(args.state), Path(args.log)
-    state = load_state(state_path)
-    known = set(state.get("ids") or [])
-    seeding = not state.get("seeded_at") or not known
-    full = args.full or seeding
+    if args.state and len(targets) > 1:
+        sys.exit("--state/--log override a single target's paths; pass one target")
 
-    log(f"Target: @{args.target} · baseline: {len(known)} accounts")
-    log(f"Mode: {'full crawl' if full else 'incremental (newest pages only)'}")
+    log(f"Tracking {len(targets)} target(s): {', '.join('@' + t for t in targets)}")
 
-    new_users, seen_ids, exhausted = crawl(
-        api_key, args.target, args.target_id, known, full
-    )
+    # One target failing must not stop the others -- a suspended or renamed
+    # account should not silence every other report.
+    failures = []
+    for t in targets:
+        try:
+            process_target(api_key, t, args)
+        except Exception as e:  # noqa: BLE001 - reported and re-raised below
+            log(f"! @{t} failed: {e}")
+            failures.append(t)
 
-    if seeding:
-        # First run establishes the baseline. Reporting 5,000 "new" follows on
-        # day one would be noise, so we stay quiet.
-        state.update(
-            target=args.target,
-            seeded_at=now_iso(),
-            last_checked=now_iso(),
-            ids=sorted(seen_ids),
-        )
-        if not args.dry_run:
-            save_state(state_path, state)
-        log(f"\nSeeded baseline with {len(seen_ids)} accounts. No issue filed.")
-        log("Future runs will report only follows added after this point.")
-        return
-
-    if full and exhausted:
-        # A complete crawl is authoritative: drop unfollowed accounts so a
-        # re-follow later still registers as new.
-        combined = seen_ids
-        dropped = len(known - seen_ids)
-        if dropped:
-            log(f"  {dropped} account(s) no longer followed — pruned from baseline")
-    else:
-        combined = known | seen_ids
-
-    state.update(
-        target=args.target,
-        last_checked=now_iso(),
-        ids=sorted(combined),
-    )
-
-    if not new_users:
-        log("\nNo new follows.")
-        if not args.dry_run:
-            save_state(state_path, state)
-        return
-
-    log(f"\n{len(new_users)} new follow(s):")
-    for u in new_users:
-        log(f"  @{u['username']} — {u['name']}")
-
-    stamp = now_iso()
-    entries = [dict(u, detected_at=stamp, target=args.target) for u in new_users]
-    title, body = build_issue(args.target, new_users)
-
-    if args.dry_run:
-        log(f"\n(dry run)\n\n=== {title} ===\n{body}")
-        return
-
-    url = create_issue(title, body)
-    if url:
-        log(f"Filed {url}")
-
-    append_log(log_path, entries)
-    save_state(state_path, state)
+    if failures:
+        sys.exit(f"failed for: {', '.join(failures)}")
 
 
 if __name__ == "__main__":

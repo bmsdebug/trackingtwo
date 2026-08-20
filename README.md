@@ -1,7 +1,8 @@
 # Follow tracker
 
-Files a GitHub issue whenever [@eladgil](https://x.com/eladgil) follows someone new,
-with the new account's handle, name, bio and follower count.
+Files a GitHub issue whenever a tracked account follows someone new, with the new
+account's handle, name, bio and follower count. Currently tracking
+[@eladgil](https://x.com/eladgil) and [@GuptaRK22](https://x.com/GuptaRK22).
 
 Runs on GitHub Actions once a day. No server and no extra accounts — the only
 running cost is one small API call per check.
@@ -10,18 +11,18 @@ running cost is one small API call per check.
 
 `twitterapi.io`'s followings endpoint returns results **sorted by follow date,
 newest first**, 200 per page. That's the whole trick: new follows always appear at
-the top, so each check only needs page 1 — not a crawl of all ~1,800 accounts he
-follows. Verified against the live API: page 1 comes back in exact
+the top, so each check only needs page 1 — not a crawl of every account they
+follow. Verified against the live API: page 1 comes back in exact
 reverse-chronological order.
 
-1. **First run** crawls the complete following list once and saves every account ID
-   to `state/following.json`. This baseline is what makes the cheap page-1 check
+1. **First run** for a handle crawls its complete following list once and saves
+   every account ID to `state/<handle>/following.json`. This baseline is what makes the cheap page-1 check
    correct — see the note below. No issue is filed on this run.
 2. **Every run after** fetches just page 1 and reports any ID missing from the
    baseline. If page 1 comes back *entirely* new (200+ follows since the last
    check), it keeps paging until it hits familiar territory, up to 5 pages.
-3. New follows are appended to `state/new_follows.jsonl` as a permanent history,
-   and the updated state is committed back to the repo.
+3. New follows are appended to `state/<handle>/new_follows.jsonl` as a permanent
+   history, and the updated state is committed back to the repo.
 
 <details>
 <summary>Why the full baseline matters</summary>
@@ -51,10 +52,17 @@ there's something to report. Each issue assigns and ccs you so it actually reach
 your inbox; owning the repo is *not* by itself enough to be notified about a
 bot-authored issue (see Troubleshooting).
 
-### Tracking someone else instead
+### Tracking more accounts
 
-Add a repository **variable** (not secret) called `TARGET_USERNAME` set to any
-handle. Then delete `state/` and re-run to seed a fresh baseline.
+Add a repository **variable** (not secret) called `TARGETS`, set to a
+comma-separated list of handles — e.g. `eladgil,GuptaRK22,someoneelse`. Each gets
+its own baseline under `state/<handle>/` and its own issues, and a newly added
+handle seeds itself silently on its next run. Removing a handle stops the checks
+but leaves its history in place.
+
+One target failing (renamed, suspended, gone private) is logged and the run
+continues, so it cannot silence the others; the job still exits non-zero so the
+failure is visible.
 
 ## Cost
 
@@ -70,13 +78,18 @@ profiles lands **under $1/year** either way; the one-time seed crawl was the onl
 real spend. Raising the cron to `"7 */4 * * *"` or `"7 * * * *"` multiplies that by
 4x or 24x in exchange for a shorter worst-case delay.
 
-`MAX_PAGES_INCREMENTAL` (default 5) hard-caps how many pages a single run can fetch, so a bug or an upstream change can't quietly run up a bill.
+`MAX_PAGES_INCREMENTAL` (default 5) hard-caps how many pages a single run can
+fetch, so a bug or an upstream change can't quietly run up a bill. Calls are paced
+to one every 5.2s (`API_MIN_INTERVAL`) because the free tier answers 429 above one
+request per 5 seconds.
 
 ## Running locally
 
 ```bash
 export TWITTERAPI_IO_KEY=...
 python track.py --probe        # 1 call: dump the raw API shape and stop
+python track.py --check a b    # does @a follow @b?  (also on the Run workflow form)
+python track.py --targets x,y  # override the tracked handles
 python track.py --dry-run      # print what would be filed, touch nothing
 python track.py --full         # re-crawl everything; also prunes unfollows
 ```
@@ -86,13 +99,15 @@ the issue body instead of filing it. All three are also available as checkboxes 
 the *Run workflow* button.
 
 ```bash
-python3 test_track.py    # 25 checks against a mock API, no key or network needed
+python3 test_track.py    # 31 checks against a mock API, no key or network needed
 ```
 
 The mock mirrors the live response shape (`followings`, `followers_count`,
 `screen_name`), and the suite covers the cases that are easy to get wrong:
 seeding, the unfollow slide-up false positive, a 200+ follow burst, `--full`
-pruning, re-follow after a prune, and `--dry-run` leaving state untouched.
+pruning, re-follow after a prune, `--dry-run` leaving state untouched, per-target
+path isolation, and adopting the pre-multi-target state layout instead of
+re-seeding.
 
 ## Troubleshooting
 
@@ -129,8 +144,8 @@ for an immediate check.
 
 ## Notes
 
-- **Follows are only visible if his following list is public.** If he protects his
-  account or the endpoint stops returning ordered results, the check will go quiet
+- **Follows are only visible while the list is public.** If a tracked account goes
+  protected or the endpoint stops returning ordered results, the check will go quiet
   rather than fail loudly — worth a manual `--full` run occasionally to
   confirm it's still tracking.
 - **Scheduled workflows are disabled after 60 days of repository inactivity.** This
