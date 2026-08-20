@@ -133,7 +133,14 @@ def probe(api_key, username, user_id):
             log(f"user list found under {key!r}: {len(entries)} entries")
             if entries:
                 log(f"first entry fields: {sorted(entries[0])}")
-                log("normalized to:\n" + json.dumps(normalize(entries[0]), indent=2))
+                # The head of page 1 is what the incremental fast path relies on
+                # being the newest follows. Print it so ordering can be checked
+                # against reality rather than assumed.
+                log("first 8 handles on page 1 (newest first, if ordering holds):")
+                for i, e in enumerate(entries[:8], 1):
+                    n = normalize(e)
+                    log(f"  {i:2d}. @{n['username']}  ({n['name']})")
+                log("normalized first entry:\n" + json.dumps(normalize(entries[0]), indent=2))
             break
     else:
         log("NO user list found under any expected key. Raw response:")
