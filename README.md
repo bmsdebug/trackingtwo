@@ -3,7 +3,7 @@
 Files a GitHub issue whenever [@eladgil](https://x.com/eladgil) follows someone new,
 with the new account's handle, name, bio and follower count.
 
-Runs on GitHub Actions every hour. No server and no extra accounts — the only
+Runs on GitHub Actions once a day. No server and no extra accounts — the only
 running cost is one small API call per check.
 
 ## How it works
@@ -46,7 +46,7 @@ against the previous page means slide-ups are recognised and stay quiet.
 4. **Run it once manually:** Actions → *Track new follows* → Run workflow. This
    seeds the baseline (takes a minute or two, one API call per 200 accounts).
 
-That's it — from then on it runs itself hourly and opens an issue when
+That's it — from then on it runs itself daily at 14:07 UTC and opens an issue when
 there's something to report. Each issue assigns and ccs you so it actually reaches
 your inbox; owning the repo is *not* by itself enough to be notified about a
 bot-authored issue (see Troubleshooting).
@@ -65,11 +65,10 @@ handle. Then delete `state/` and re-run to seed a fresh baseline.
 | One-time seed | ~1 call per 200 accounts followed |
 
 twitterapi.io bills per profile returned, roughly $1 per 100,000 profiles, with a
-per-call minimum. At 200 profiles a call that puts an hourly schedule somewhere in
-the **$20-50/year** range and a daily one under **$1/year** — the published pricing
-is ambiguous about the minimum, so check your actual spend on the twitterapi.io
-dashboard after a few days rather than trusting this estimate. Drop the cron to
-`"7 */4 * * *"` to cut it ~4x if it lands at the high end.
+per-call minimum the published pricing is vague about. One check a day of 200
+profiles lands **under $1/year** either way; the one-time seed crawl was the only
+real spend. Raising the cron to `"7 */4 * * *"` or `"7 * * * *"` multiplies that by
+4x or 24x in exchange for a shorter worst-case delay.
 
 `MAX_PAGES_INCREMENTAL` (default 5) hard-caps how many pages a single run can fetch, so a bug or an upstream change can't quietly run up a bill.
 
@@ -121,11 +120,12 @@ names changed. The error prints the top-level keys and a truncated response body
 **Scheduled run lands ~20-30 minutes late.** Normal — GitHub's cron is best-effort
 and deprioritised under load. It does not skip, it just slips.
 
-**A follow shows on his profile before you get an issue.** Expected within one
-check interval: the tracker only sees a follow on its next run. Ordering was
-verified against the live API on 2026-08-20 — page 1 came back in exact
-reverse-chronological order matching every detection on record — so the fast path
-is not missing follows, it is just sampling hourly.
+**A follow shows on his profile before you get an issue.** Expected, for up to 24h:
+the tracker only sees a follow on its next scheduled run. Ordering was verified
+against the live API on 2026-08-20 — page 1 came back in exact reverse-chronological
+order matching every detection on record — so the fast path is not missing follows,
+it is sampling once a day. Raise the cron if that lag matters, or hit *Run workflow*
+for an immediate check.
 
 ## Notes
 

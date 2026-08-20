@@ -2,12 +2,12 @@ name: Track new follows
 
 on:
   schedule:
-    # Hourly. A daily check meant new follows sat unreported for up to 24h --
-    # long enough that the count on his profile changed before we said anything.
-    # Each run is still a single page-1 call, so the cost scales with frequency
-    # and nothing else. Change back to "7 14 * * *" for one check a day.
+    # Once a day at 14:07 UTC. Each run is a single page-1 call, so cost scales
+    # with frequency and nothing else -- "7 */4 * * *" or "7 * * * *" trade
+    # money for a shorter worst-case delay. Expect to hear about a follow up to
+    # 24h after it happens; that is the sampling interval, not a missed follow.
     # GitHub's scheduler is best-effort; observed runs land ~20-30 min late.
-    - cron: "7 * * * *"
+    - cron: "7 14 * * *"
   workflow_dispatch:
     inputs:
       full_resync:
