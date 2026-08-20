@@ -3,22 +3,23 @@
 Files a GitHub issue whenever [@eladgil](https://x.com/eladgil) follows someone new,
 with the new account's handle, name, bio and follower count.
 
-Runs on GitHub Actions once a day. No server, no extra accounts, and the API bill
-is a fraction of a cent per day.
+Runs on GitHub Actions every hour. No server and no extra accounts — the only
+running cost is one small API call per check.
 
 ## How it works
 
 `twitterapi.io`'s followings endpoint returns results **sorted by follow date,
 newest first**, 200 per page. That's the whole trick: new follows always appear at
-the top, so a daily check only needs page 1 — not a crawl of all ~N thousand
-accounts he follows.
+the top, so each check only needs page 1 — not a crawl of all ~1,800 accounts he
+follows. Verified against the live API: page 1 comes back in exact
+reverse-chronological order.
 
 1. **First run** crawls the complete following list once and saves every account ID
-   to `state/following.json`. This baseline is what makes the cheap daily check
+   to `state/following.json`. This baseline is what makes the cheap page-1 check
    correct — see the note below. No issue is filed on this run.
 2. **Every run after** fetches just page 1 and reports any ID missing from the
-   baseline. If page 1 comes back *entirely* new (he followed 200+ accounts in a
-   day), it keeps paging until it hits familiar territory, up to 5 pages.
+   baseline. If page 1 comes back *entirely* new (200+ follows since the last
+   check), it keeps paging until it hits familiar territory, up to 5 pages.
 3. New follows are appended to `state/new_follows.jsonl` as a permanent history,
    and the updated state is committed back to the repo.
 
@@ -45,7 +46,7 @@ against the previous page means slide-ups are recognised and stay quiet.
 4. **Run it once manually:** Actions → *Track new follows* → Run workflow. This
    seeds the baseline (takes a minute or two, one API call per 200 accounts).
 
-That's it — from then on it runs itself at 14:07 UTC daily and opens an issue when
+That's it — from then on it runs itself hourly and opens an issue when
 there's something to report. Each issue assigns and ccs you so it actually reaches
 your inbox; owning the repo is *not* by itself enough to be notified about a
 bot-authored issue (see Troubleshooting).
@@ -60,15 +61,17 @@ handle. Then delete `state/` and re-run to seed a fresh baseline.
 | | |
 |---|---|
 | GitHub Actions | Free (public repo; ~1 min/day of private-repo minutes otherwise) |
-| Daily check | 1 API call, 200 profiles — well under a cent |
+| Each check | 1 API call, 200 profiles |
 | One-time seed | ~1 call per 200 accounts followed |
 
-twitterapi.io bills per profile returned, roughly $1 per 100,000 profiles. A daily
-check is on the order of **a few cents a year**. The seed crawl is the only
-meaningful spend and happens once.
+twitterapi.io bills per profile returned, roughly $1 per 100,000 profiles, with a
+per-call minimum. At 200 profiles a call that puts an hourly schedule somewhere in
+the **$20-50/year** range and a daily one under **$1/year** — the published pricing
+is ambiguous about the minimum, so check your actual spend on the twitterapi.io
+dashboard after a few days rather than trusting this estimate. Drop the cron to
+`"7 */4 * * *"` to cut it ~4x if it lands at the high end.
 
-`MAX_PAGES_INCREMENTAL` (default 5) hard-caps how many pages a single daily run can
-fetch, so a bug or an upstream change can't quietly run up a bill.
+`MAX_PAGES_INCREMENTAL` (default 5) hard-caps how many pages a single run can fetch, so a bug or an upstream change can't quietly run up a bill.
 
 ## Running locally
 
@@ -115,18 +118,25 @@ repo's Watch to **All Activity** as a belt-and-braces.
 names changed. The error prints the top-level keys and a truncated response body;
 `--probe` shows the full shape. Add the new field name to the tuple in `fetch_page`.
 
-**Scheduled run lands ~20 minutes late.** Normal — GitHub's cron is best-effort and
-deprioritised under load. Irrelevant for a daily check.
+**Scheduled run lands ~20-30 minutes late.** Normal — GitHub's cron is best-effort
+and deprioritised under load. It does not skip, it just slips.
+
+**A follow shows on his profile before you get an issue.** Expected within one
+check interval: the tracker only sees a follow on its next run. Ordering was
+verified against the live API on 2026-08-20 — page 1 came back in exact
+reverse-chronological order matching every detection on record — so the fast path
+is not missing follows, it is just sampling hourly.
 
 ## Notes
 
 - **Follows are only visible if his following list is public.** If he protects his
-  account or the endpoint stops returning ordered results, the daily check will go
-  quiet rather than fail loudly — worth a manual `--full` run occasionally to
+  account or the endpoint stops returning ordered results, the check will go quiet
+  rather than fail loudly — worth a manual `--full` run occasionally to
   confirm it's still tracking.
 - **Scheduled workflows are disabled after 60 days of repository inactivity.** This
   one commits a `last_checked` timestamp on every run, which counts as activity and
   keeps the schedule alive indefinitely.
 - Ordering by follow date is twitterapi.io's documented behaviour, not a guarantee
-  from X. The occasional `--full` resync corrects anything the fast path missed,
-  since the baseline is what determines what counts as new.
+  from X, though it was confirmed correct against the live list on 2026-08-20. The
+  occasional `--full` resync corrects anything the fast path might miss, since the
+  baseline is what determines what counts as new.

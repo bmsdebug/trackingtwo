@@ -2,9 +2,12 @@ name: Track new follows
 
 on:
   schedule:
-    # 14:00 UTC daily. GitHub's scheduler is best-effort -- observed runs land
-    # ~20 min late, which is normal and harmless for a daily check.
-    - cron: "7 14 * * *"
+    # Hourly. A daily check meant new follows sat unreported for up to 24h --
+    # long enough that the count on his profile changed before we said anything.
+    # Each run is still a single page-1 call, so the cost scales with frequency
+    # and nothing else. Change back to "7 14 * * *" for one check a day.
+    # GitHub's scheduler is best-effort; observed runs land ~20-30 min late.
+    - cron: "7 * * * *"
   workflow_dispatch:
     inputs:
       full_resync:
