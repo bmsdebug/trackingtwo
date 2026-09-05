@@ -201,29 +201,57 @@ def check_follows(api_key, source, target, max_pages=50):
     return False
 
 
-def recent_follows(api_key, source, limit=30):
-    """List a handle's most recent follows, newest first.
+def recent_follows(api_key, source, limit=30, out_path=None):
+    """List a handle's most recent follows, newest first, paging up to `limit`.
 
     The API exposes order but no follow timestamps -- the only date on a user
-    object is when that account joined X. So this can answer "the last N
-    accounts they followed" but never "the ones they followed since <date>".
-    Dating follows requires a baseline to diff against, which is what the
-    tracked-targets path builds over time.
+    object is when that account joined X. So this answers "the last N accounts
+    they followed", never "the ones they followed since <date>". Converting N
+    into a time window needs an assumed follow rate, which is the caller's
+    judgement, not something the data supports.
     """
     src = source.lstrip("@")
-    users, _cursor, has_next = fetch_page(api_key, src, None, "")
-    total = f"{len(users)}+" if has_next else str(len(users))
-    log(f"@{src} follows {total} accounts.")
-    log(f"\nMost recent {min(limit, len(users))}, newest first "
-        f"(order only -- the API gives no follow dates):\n")
-    for i, u in enumerate(users[:limit], 1):
-        n = u["followers"]
-        n = f"{n:,}" if isinstance(n, int) else str(n)
-        log(f"{i:3d}. @{u['username']}  —  {u['name']}  ·  {n} followers")
-        if u["bio"]:
-            bio = " ".join(u["bio"].split())
-            log(f"     {bio[:150]}")
-    return users[:limit]
+    collected, cursor = [], ""
+    pages = 0
+    while len(collected) < limit:
+        users, cursor, has_next = fetch_page(api_key, src, None, cursor)
+        pages += 1
+        if not users:
+            break
+        collected.extend(users)
+        log(f"  page {pages}: {len(collected)} collected")
+        if not has_next or not cursor:
+            log(f"  reached the end of @{src}'s following list")
+            break
+    collected = collected[:limit]
+
+    log(f"\n@{src}: {len(collected)} most recent follows, newest first "
+        f"({pages} page(s)). Order only -- the API gives no follow dates.\n")
+
+    if out_path:
+        p = Path(out_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w") as f:
+            f.write(f"# @{src} — {len(collected)} most recent follows\n\n")
+            f.write(f"Newest first, captured {now_iso()}.\n\n")
+            f.write("The API returns follow **order**, not follow dates, so these "
+                    "cannot be attributed to a specific day.\n\n")
+            f.write("| # | Handle | Name | Followers | Bio |\n")
+            f.write("|---:|---|---|---:|---|\n")
+            for i, u in enumerate(collected, 1):
+                n = u["followers"]
+                n = f"{n:,}" if isinstance(n, int) else str(n)
+                bio = " ".join((u["bio"] or "").split()).replace("|", "\\|")[:160]
+                name = (u["name"] or "").replace("|", "\\|")
+                f.write(f"| {i} | [@{u['username']}](https://x.com/{u['username']}) "
+                        f"| {name} | {n} | {bio} |\n")
+        log(f"wrote {p} ({len(collected)} rows)")
+    else:
+        for i, u in enumerate(collected, 1):
+            n = u["followers"]
+            n = f"{n:,}" if isinstance(n, int) else str(n)
+            log(f"{i:3d}. @{u['username']}  —  {u['name']}  ·  {n} followers")
+    return collected
 
 
 def normalize(u):
@@ -513,6 +541,7 @@ def main():
         help="list HANDLE's most recent follows, newest first, then exit",
     )
     ap.add_argument("--limit", type=int, default=30, help="rows for --recent")
+    ap.add_argument("--out", default=None, help="write --recent results to this file")
     ap.add_argument(
         "--check",
         nargs=2,
@@ -535,7 +564,7 @@ def main():
         sys.exit("no targets configured — set TARGETS to a comma-separated list")
 
     if args.recent:
-        recent_follows(api_key, args.recent, args.limit)
+        recent_follows(api_key, args.recent, args.limit, args.out)
         return
 
     if args.check:

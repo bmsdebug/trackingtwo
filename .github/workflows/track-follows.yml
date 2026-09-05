@@ -34,6 +34,10 @@ on:
         description: "One-off: list this handle's most recent follows"
         type: string
         default: ""
+      recent_limit:
+        description: "How many recent follows to fetch (200 per page)"
+        type: string
+        default: "30"
 
 # Never let two runs race on the state file.
 concurrency:
@@ -91,9 +95,12 @@ jobs:
           CHECK_SOURCE: ${{ inputs.check_source }}
           CHECK_TARGET: ${{ inputs.check_target }}
           RECENT_SOURCE: ${{ inputs.recent_source }}
+          RECENT_LIMIT: ${{ inputs.recent_limit }}
         run: |
           if [ -n "$RECENT_SOURCE" ]; then
-            python track.py --recent "$RECENT_SOURCE"
+            python track.py --recent "$RECENT_SOURCE" \
+              --limit "${RECENT_LIMIT:-30}" \
+              --out "lookups/${RECENT_SOURCE}-recent.md"
             exit 0
           fi
           # Handles come from workflow input, so pass them as argv rather than
@@ -108,11 +115,11 @@ jobs:
           python track.py $args
 
       - name: Commit state
-        if: ${{ inputs.dry_run != true && inputs.probe != true && inputs.check_source == '' && inputs.recent_source == '' }}
+        if: ${{ inputs.dry_run != true && inputs.probe != true && inputs.check_source == '' }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state/
+          git add state/ lookups/ 2>/dev/null || git add state/
           if git diff --cached --quiet; then
             echo "No state change."
             exit 0
