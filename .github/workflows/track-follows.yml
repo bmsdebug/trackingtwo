@@ -30,6 +30,10 @@ on:
         description: "...follow this handle?"
         type: string
         default: ""
+      recent_source:
+        description: "One-off: list this handle's most recent follows"
+        type: string
+        default: ""
 
 # Never let two runs race on the state file.
 concurrency:
@@ -86,7 +90,12 @@ jobs:
           PROBE: ${{ inputs.probe }}
           CHECK_SOURCE: ${{ inputs.check_source }}
           CHECK_TARGET: ${{ inputs.check_target }}
+          RECENT_SOURCE: ${{ inputs.recent_source }}
         run: |
+          if [ -n "$RECENT_SOURCE" ]; then
+            python track.py --recent "$RECENT_SOURCE"
+            exit 0
+          fi
           # Handles come from workflow input, so pass them as argv rather than
           # interpolating them into the command string.
           if [ -n "$CHECK_SOURCE" ] && [ -n "$CHECK_TARGET" ]; then
@@ -99,7 +108,7 @@ jobs:
           python track.py $args
 
       - name: Commit state
-        if: ${{ inputs.dry_run != true && inputs.probe != true && inputs.check_source == '' }}
+        if: ${{ inputs.dry_run != true && inputs.probe != true && inputs.check_source == '' && inputs.recent_source == '' }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

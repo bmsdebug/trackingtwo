@@ -201,6 +201,31 @@ def check_follows(api_key, source, target, max_pages=50):
     return False
 
 
+def recent_follows(api_key, source, limit=30):
+    """List a handle's most recent follows, newest first.
+
+    The API exposes order but no follow timestamps -- the only date on a user
+    object is when that account joined X. So this can answer "the last N
+    accounts they followed" but never "the ones they followed since <date>".
+    Dating follows requires a baseline to diff against, which is what the
+    tracked-targets path builds over time.
+    """
+    src = source.lstrip("@")
+    users, _cursor, has_next = fetch_page(api_key, src, None, "")
+    total = f"{len(users)}+" if has_next else str(len(users))
+    log(f"@{src} follows {total} accounts.")
+    log(f"\nMost recent {min(limit, len(users))}, newest first "
+        f"(order only -- the API gives no follow dates):\n")
+    for i, u in enumerate(users[:limit], 1):
+        n = u["followers"]
+        n = f"{n:,}" if isinstance(n, int) else str(n)
+        log(f"{i:3d}. @{u['username']}  —  {u['name']}  ·  {n} followers")
+        if u["bio"]:
+            bio = " ".join(u["bio"].split())
+            log(f"     {bio[:150]}")
+    return users[:limit]
+
+
 def normalize(u):
     """Flatten one user object down to the fields we care about."""
 
@@ -483,6 +508,12 @@ def main():
     )
     ap.add_argument("--dry-run", action="store_true", help="don't file an issue or write state")
     ap.add_argument(
+        "--recent",
+        metavar="HANDLE",
+        help="list HANDLE's most recent follows, newest first, then exit",
+    )
+    ap.add_argument("--limit", type=int, default=30, help="rows for --recent")
+    ap.add_argument(
         "--check",
         nargs=2,
         metavar=("SOURCE", "TARGET"),
@@ -502,6 +533,10 @@ def main():
     targets = [t.strip().lstrip("@") for t in args.targets.split(",") if t.strip()]
     if not targets:
         sys.exit("no targets configured — set TARGETS to a comma-separated list")
+
+    if args.recent:
+        recent_follows(api_key, args.recent, args.limit)
+        return
 
     if args.check:
         check_follows(api_key, args.check[0], args.check[1])
