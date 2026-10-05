@@ -31,6 +31,7 @@ from pathlib import Path
 
 API_BASE = "https://api.twitterapi.io"
 FOLLOWINGS_PATH = "/twitter/user/followings"
+FOLLOWERS_PATH = "/twitter/user/followers"
 PAGE_SIZE = 200  # fixed by the endpoint
 
 # Cap incremental crawls so a bug or an API change can never run up a bill.
@@ -97,14 +98,14 @@ def http_json(url, headers, method="GET", payload=None, retries=4):
 # --------------------------------------------------------------------------
 
 
-def fetch_page(api_key, username, user_id, cursor):
+def fetch_page(api_key, username, user_id, cursor, path=FOLLOWINGS_PATH):
     params = {"cursor": cursor or ""}
     if user_id:
         params["userId"] = user_id
     else:
         params["userName"] = username
 
-    url = f"{API_BASE}{FOLLOWINGS_PATH}?{urllib.parse.urlencode(params)}"
+    url = f"{API_BASE}{path}?{urllib.parse.urlencode(params)}"
     _throttle()
     data = http_json(url, {"X-API-Key": api_key, "Accept": "application/json"})
 
@@ -114,7 +115,7 @@ def fetch_page(api_key, username, user_id, cursor):
 
     # The field name has moved around between doc revisions; accept any of them.
     users = None
-    for key in ("followings", "following", "users", "data"):
+    for key in ("followings", "following", "followers", "users", "data"):
         val = data.get(key)
         if isinstance(val, list):
             users = val
@@ -199,6 +200,54 @@ def check_follows(api_key, source, target, max_pages=50):
     log(f"\nNO — @{want} is not in @{src}'s following list ({scanned} accounts, "
         f"complete list scanned).")
     return False
+
+
+def dump_connections(api_key, handle, kind="following", limit=100000,
+                     out_path=None, max_pages=None):
+    """Page out a handle's complete following or follower list.
+
+    Returns (rows, truncated). `truncated` is True when a cap stopped the crawl
+    before the end -- a partial list reported as complete would be worse than
+    no list at all, so the caller must surface it.
+    """
+    src = handle.lstrip("@")
+    path = FOLLOWINGS_PATH if kind == "following" else FOLLOWERS_PATH
+    cap = max_pages or int(os.environ.get("MAX_DUMP_PAGES", "100"))
+    rows, cursor, pages, truncated = [], "", 0, False
+
+    while len(rows) < limit:
+        if pages >= cap:
+            truncated = True
+            log(f"! hit the {cap}-page cap ({len(rows)} rows) — list is incomplete")
+            break
+        users, cursor, has_next = fetch_page(api_key, src, None, cursor, path)
+        pages += 1
+        if not users:
+            break
+        rows.extend(users)
+        if pages % 5 == 0 or not has_next:
+            log(f"  page {pages}: {len(rows)} rows")
+        if not has_next or not cursor:
+            break
+    else:
+        truncated = len(rows) >= limit
+
+    rows = rows[:limit]
+    label = "following" if kind == "following" else "followers"
+    log(f"@{src}: {len(rows)} {label}{' (TRUNCATED)' if truncated else ' (complete)'}")
+
+    if out_path:
+        import csv
+        p = Path(out_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("w", newline="") as f:
+            wr = csv.writer(f)
+            wr.writerow(["rank", "handle", "name", "followers", "bio", "url"])
+            for i, u in enumerate(rows, 1):
+                wr.writerow([i, u["username"], u["name"], u["followers"],
+                             " ".join((u["bio"] or "").split()), u["url"]])
+        log(f"wrote {p}")
+    return rows, truncated
 
 
 def recent_follows(api_key, source, limit=30, out_path=None):
@@ -540,8 +589,11 @@ def main():
         metavar="HANDLE",
         help="list HANDLE's most recent follows, newest first, then exit",
     )
-    ap.add_argument("--limit", type=int, default=30, help="rows for --recent")
-    ap.add_argument("--out", default=None, help="write --recent results to this file")
+    ap.add_argument("--limit", type=int, default=0, help="max rows (0 = no limit for --dump)")
+    ap.add_argument("--out", default=None, help="write results to this file")
+    ap.add_argument("--dump", metavar="HANDLE", help="dump HANDLE's full list to CSV")
+    ap.add_argument("--kind", choices=("following", "followers"), default="following",
+                    help="which list --dump should fetch")
     ap.add_argument(
         "--check",
         nargs=2,
@@ -563,8 +615,12 @@ def main():
     if not targets:
         sys.exit("no targets configured — set TARGETS to a comma-separated list")
 
+    if args.dump:
+        dump_connections(api_key, args.dump, args.kind, args.limit or 100000, args.out)
+        return
+
     if args.recent:
-        recent_follows(api_key, args.recent, args.limit, args.out)
+        recent_follows(api_key, args.recent, args.limit or 30, args.out)
         return
 
     if args.check:

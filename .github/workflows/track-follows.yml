@@ -38,6 +38,10 @@ on:
         description: "How many recent follows to fetch (200 per page)"
         type: string
         default: "30"
+      dump_spec:
+        description: "Full-list dump, e.g. alice:following,bob:followers"
+        type: string
+        default: ""
 
 # Never let two runs race on the state file.
 concurrency:
@@ -96,7 +100,21 @@ jobs:
           CHECK_TARGET: ${{ inputs.check_target }}
           RECENT_SOURCE: ${{ inputs.recent_source }}
           RECENT_LIMIT: ${{ inputs.recent_limit }}
+          DUMP_SPEC: ${{ inputs.dump_spec }}
         run: |
+          if [ -n "$DUMP_SPEC" ]; then
+            # "handle:kind,handle:kind" -- kind defaults to following
+            echo "$DUMP_SPEC" | tr ',' '\n' | while IFS= read -r entry; do
+              [ -z "$entry" ] && continue
+              h="${entry%%:*}"
+              k="${entry#*:}"
+              [ "$k" = "$entry" ] && k="following"
+              echo "::group::$h ($k)"
+              python track.py --dump "$h" --kind "$k" --out "lookups/$h-$k.csv"
+              echo "::endgroup::"
+            done
+            exit 0
+          fi
           if [ -n "$RECENT_SOURCE" ]; then
             python track.py --recent "$RECENT_SOURCE" \
               --limit "${RECENT_LIMIT:-30}" \
