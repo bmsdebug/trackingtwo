@@ -1,5 +1,9 @@
 name: Track new follows
 
+# Imported from sha-manav/tracking. A repo import copies git objects without
+# emitting a push event, so Actions never indexes the workflow and the Actions
+# tab reads "No workflows found". This push is what registers it.
+
 on:
   schedule:
     # Once a day at 14:07 UTC. Each run is a single page-1 call, so cost scales
