@@ -10,8 +10,15 @@ on:
     # with frequency and nothing else -- "7 */4 * * *" or "7 * * * *" trade
     # money for a shorter worst-case delay. Expect to hear about a follow up to
     # 24h after it happens; that is the sampling interval, not a missed follow.
-    # GitHub's scheduler is best-effort; observed runs land ~20-30 min late.
+    # GitHub's scheduler is best-effort; observed runs land ~20-30 min late,
+    # and under load it DROPS schedule events outright rather than queuing them.
+    # The 2026-10-14 run never fired despite a valid cron on the default branch,
+    # so give the day two chances. The check is idempotent -- a second run that
+    # finds nothing new just refreshes last_checked for 2 API calls -- so this
+    # stays "once a day" in effect while surviving one dropped event.
+    # Drop either line to go back to a single attempt.
     - cron: "7 14 * * *"
+    - cron: "23 2 * * *"
   workflow_dispatch:
     inputs:
       full_resync:
