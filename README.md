@@ -99,7 +99,7 @@ the issue body instead of filing it. All three are also available as checkboxes 
 the *Run workflow* button.
 
 ```bash
-python3 test_track.py    # 31 checks against a mock API, no key or network needed
+python3 test_track.py    # 36 checks against a mock API, no key or network needed
 ```
 
 The mock mirrors the live response shape (`followings`, `followers_count`,
@@ -134,6 +134,12 @@ names changed. The error prints the top-level keys and a truncated response body
 
 **Scheduled run lands ~20-30 minutes late.** Normal — GitHub's cron is best-effort
 and deprioritised under load. It does not skip, it just slips.
+
+**A re-follow.** If a tracked account unfollows someone and later follows them
+again, their id is still in the baseline (incremental runs never prune), so a set
+difference alone stays silent. The check now also treats everything above the
+account that topped the list on the previous run as new, which catches re-follows
+without extra API calls. `top_id` in the state file is that anchor.
 
 **A follow shows on his profile before you get an issue.** Expected, for up to 24h:
 the tracker only sees a follow on its next scheduled run. Ordering was verified

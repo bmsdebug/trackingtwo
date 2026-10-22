@@ -364,11 +364,12 @@ def append_log(path, entries):
 def crawl(api_key, username, user_id, known, full):
     """Walk the followings list, newest first, collecting accounts not in `known`.
 
-    Returns (new_users, all_seen_ids, exhausted) where `exhausted` is True only
-    if we paged all the way to the end of the list.
+    Returns (new_users, all_seen_ids, exhausted, ordered) where `exhausted` is
+    True only if we paged all the way to the end of the list, and `ordered` is
+    every account seen, in list order, newest first.
     """
     max_pages = MAX_PAGES_FULL if full else MAX_PAGES_INCREMENTAL
-    new_users, seen_ids = [], set()
+    new_users, seen_ids, ordered = [], set(), []
     cursor, exhausted = "", False
 
     for page in range(1, max_pages + 1):
@@ -379,6 +380,7 @@ def crawl(api_key, username, user_id, known, full):
 
         page_new = [u for u in users if u["id"] and u["id"] not in known]
         seen_ids.update(u["id"] for u in users if u["id"])
+        ordered.extend(users)
         new_users.extend(page_new)
         log(f"  page {page}: {len(users)} accounts, {len(page_new)} not seen before")
 
@@ -393,7 +395,7 @@ def crawl(api_key, username, user_id, known, full):
     else:
         log(f"  hit the {max_pages}-page cap; stopping")
 
-    return new_users, seen_ids, exhausted
+    return new_users, seen_ids, exhausted, ordered
 
 
 # --------------------------------------------------------------------------
@@ -516,13 +518,37 @@ def process_target(api_key, target, args):
     log(f"baseline: {len(known)} accounts · "
         f"mode: {'full crawl' if full else 'incremental (newest pages only)'}")
 
-    new_users, seen_ids, exhausted = crawl(api_key, target, None, known, full)
+    new_users, seen_ids, exhausted, ordered = crawl(api_key, target, None, known, full)
+
+    # A re-follow moves an account back to rank 1 but its id is already in the
+    # baseline, so a set difference alone stays silent -- @GuptaRK22 re-followed
+    # @jaredkushner on 2026-10-22 and nothing fired. The list is newest-first,
+    # so everything above the account that topped it last time is new,
+    # membership notwithstanding.
+    prev_top = state.get("top_id")
+    top_idx = None
+    if prev_top and not seeding:
+        top_idx = next((i for i, u in enumerate(ordered) if u["id"] == prev_top), None)
+        if top_idx is None:
+            log("  previous top account is gone (unfollowed); "
+                "falling back to baseline diff only")
+        elif top_idx:
+            known_ids = {u["id"] for u in new_users}
+            refollows = [u for u in ordered[:top_idx]
+                         if u["id"] and u["id"] not in known_ids]
+            if refollows:
+                log(f"  {len(refollows)} re-follow(s) above the previous top account")
+                # keep newest-first ordering across both kinds of new follow
+                new_users = [u for u in ordered[:top_idx]] + [
+                    u for u in new_users if u["id"] not in
+                    {x["id"] for x in ordered[:top_idx]}]
 
     if seeding:
         # First run establishes the baseline. Reporting ~1,800 "new" follows on
         # day one would be noise, so we stay quiet.
         state.update(target=target, seeded_at=now_iso(),
-                     last_checked=now_iso(), ids=sorted(seen_ids))
+                     last_checked=now_iso(), ids=sorted(seen_ids),
+                     top_id=(ordered[0]["id"] if ordered else None))
         if not args.dry_run:
             save_state(state_path, state)
         log(f"Seeded baseline with {len(seen_ids)} accounts. No issue filed.")
@@ -539,7 +565,8 @@ def process_target(api_key, target, args):
     else:
         combined = known | seen_ids
 
-    state.update(target=target, last_checked=now_iso(), ids=sorted(combined))
+    state.update(target=target, last_checked=now_iso(), ids=sorted(combined),
+                 top_id=(ordered[0]["id"] if ordered else state.get("top_id")))
 
     if not new_users:
         log("No new follows.")

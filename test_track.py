@@ -173,6 +173,25 @@ check("migration: legacy baseline adopted", set(adopted["ids"]) == {"1", "2", "3
 other = track.load_state_migrating("GuptaRK22", Path(f"{legacy_dir}/GuptaRK22/following.json"), legacy_dir)
 check("migration: other target not given elad's ids", not other.get("ids"), f"got {other}")
 
+# ---- 12. THE RE-FOLLOW CASE: id already in the baseline, back at rank 1 ----
+# @GuptaRK22 re-followed @jaredkushner; the id was still in the baseline from a
+# follow he had since dropped, so a set difference alone reported nothing.
+rf = tempfile.mkdtemp()
+base_rf = list(range(300, 0, -1))                 # 300 accounts, newest = 300
+out, n = run(base_rf, rf, [])                      # seed
+check("refollow: seeded quietly", "No issue filed" in out)
+out, n = run(base_rf, rf, [])                      # quiet run, anchors top_id
+check("refollow: quiet day stays quiet", "No new follows." in out)
+# he unfollows #50, then re-follows them -> back to rank 1, id already known
+moved = [50] + [i for i in base_rf if i != 50]
+out, n = run(moved, rf, [])
+check("refollow: detected despite id in baseline", "1 new follow(s)" in out, out[-300:])
+check("refollow: names the right account", "@user50" in out, out[-300:])
+# and a genuine new follow alongside a re-follow, both reported newest-first
+moved2 = [999, 50] + [i for i in base_rf if i != 50]
+out, n = run(moved2, rf, [])
+check("refollow: new follow above a re-follow still caught", "@user999" in out, out[-300:])
+
 print("\n=== SAMPLE ISSUE ===")
 print(title)
 print(body)
